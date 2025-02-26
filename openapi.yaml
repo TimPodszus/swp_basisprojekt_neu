@@ -1,0 +1,158 @@
+openapi: 3.0.3
+info:
+  title: SWP API
+  version: 1.0-SNAPSHOT
+
+servers:
+  - url: 'http://localhost:8899/api'
+
+security:
+  - BasicAuth: [ ]
+
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+  schemas:
+    user:
+      type: object
+      required:
+        - username
+      properties:
+        username:
+          type: string
+    lobby:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        owner:
+          $ref: '#/components/schemas/user'
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/user'
+
+paths:
+  /users:
+    get:
+      description: Returns an object of the currently authenticated user.
+      summary: Get the current user
+      operationId: currentUser
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/user'
+        '401':
+          description: Unauthorized.
+    post:
+      description: Create a new user
+      summary: Create User
+      operationId: userCreate
+      security: [ ]
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+        - name: password
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '201':
+          description: "User created."
+        '400':
+          description: "User already exists or invalid input."
+  /users/list:
+    get:
+      description: Get a list of all logged-in users
+      summary: List of users
+      operationId: userList
+      responses:
+        '200':
+          description: "List of users."
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/user'
+        '401':
+          description: "Unauthorized."
+
+  /lobbies:
+    post:
+      description: Create a new lobby
+      summary: Create Lobby
+      operationId: lobbyCreate
+      parameters:
+        - name: lobbyname
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '201':
+          description: "Lobby created."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/lobby'
+        '400':
+          description: "Lobby with name already exists."
+        '401':
+          description: "Unauthorized."
+  /lobbies/join:
+    post:
+      description: Join a lobby
+      summary: Join Lobby
+      operationId: lobbyJoin
+      parameters:
+        - name: lobbyname
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: "Lobby joined."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/lobby'
+        '401':
+          description: "Unauthorized."
+        '404':
+          description: "Lobby not found."
+  /lobbies/leave:
+    post:
+      description: Leave a lobby
+      summary: Leave Lobby
+      operationId: lobbyLeave
+      parameters:
+        - name: lobbyname
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: "Left lobby successfully."
+        '401':
+          description: "Unauthorized."
+        '404':
+          description: "Lobby not found."

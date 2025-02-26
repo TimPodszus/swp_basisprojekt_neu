@@ -1,8 +1,7 @@
 package de.uol.swp.server.lobby;
 
-import de.uol.swp.common.lobby.Lobby;
-import de.uol.swp.common.lobby.dto.LobbyDTO;
-import de.uol.swp.common.user.User;
+import de.uol.swp.server.usermanagement.ServerUser;
+import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -11,31 +10,30 @@ import java.util.Optional;
 /**
  * Manages creation, deletion and storing of lobbies
  *
- * @see de.uol.swp.common.lobby.Lobby
- * @see de.uol.swp.common.lobby.dto.LobbyDTO
  * @author Marco Grawunder
  * @since 2019-10-08
  */
+@Component
 public class LobbyManagement {
 
-    private final Map<String, Lobby> lobbies = new HashMap<>();
+    private final Map<String, ServerLobby> lobbies = new HashMap<>();
 
     /**
      * Creates a new lobby and adds it to the list
      *
-     * @implNote the primary key of the lobbies is the name therefore the name has
-     *           to be unique
-     * @param name the name of the lobby to create
+     * @param name  the name of the lobby to create
      * @param owner the user who wants to create a lobby
-     * @see de.uol.swp.common.user.User
      * @throws IllegalArgumentException name already taken
+     * @implNote the primary key of the lobbies is the name therefore the name has
+     * to be unique
+     * @see ServerUser
      * @since 2019-10-08
      */
-    public void createLobby(String name, User owner) {
+    public void createLobby(String name, ServerUser owner) {
         if (lobbies.containsKey(name)) {
             throw new IllegalArgumentException("Lobby name " + name + " already exists!");
         }
-        lobbies.put(name, new LobbyDTO(name, owner));
+        lobbies.put(name, new ServerLobby(name, owner));
     }
 
     /**
@@ -61,13 +59,12 @@ public class LobbyManagement {
      * @see Optional
      * @since 2019-10-08
      */
-    public Optional<Lobby> getLobby(String name) {
-        Lobby lobby = lobbies.get(name);
+    public Optional<ServerLobby> getLobby(String name) {
+        ServerLobby lobby = lobbies.get(name);
         if (lobby != null) {
             return Optional.of(lobby);
         }
         return Optional.empty();
     }
-
 
 }

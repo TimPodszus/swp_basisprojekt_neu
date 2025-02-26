@@ -1,5 +1,27 @@
 *.class
 bin/
 target/
-.idea
 *.iml
+
+# Compiled output
+/dist
+/tmp
+/out-tsc
+/bazel-out
+
+# IDEs and editors
+.idea/
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# Visual Studio Code
+.vscode/
+.history/
+
+# System files
+.DS_Store
+Thumbs.db

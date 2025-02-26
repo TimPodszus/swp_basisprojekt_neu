@@ -1,64 +1,81 @@
 package de.uol.swp.server;
 
-import de.uol.swp.server.communication.ServerHandler;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.greenrobot.eventbus.EventBus;
-import de.uol.swp.common.message.Message;
-import de.uol.swp.common.message.ServerMessage;
+import de.uol.swp.server.lobby.LobbyMapping;
+import de.uol.swp.server.usermanagement.ServerUser;
+import de.uol.swp.server.usermanagement.UserMapping;
+import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
 
-import java.util.Collections;
+import java.util.Collection;
+import java.util.Objects;
 
 /**
  * This class is the base for creating a new Service.
- *
+ * <p>
  * This class prepares the child classes to have the EventBus set and methods post
  * and sendToAll implemented in order to reduce unnecessary code repetition.
  *
- * @author Marco Grawunder
- * @since 2019-10-08
+ * @author Tilman Holube
+ * @since 2025-03-17
  */
+@RequiredArgsConstructor
+public abstract class AbstractService {
 
+    protected final LobbyMapping lobbyMapping;
+    protected final UserMapping userMapping;
 
-public class AbstractService {
-
-    private static final Logger LOG = LogManager.getLogger(AbstractService.class);
-
-    private final EventBus bus;
+    protected final SimpUserRegistry userRegistry;
+    private final SimpMessagingTemplate messagingTemplate;
 
     /**
-     * Constructor
+     * Sends a message to a specific user with the given topic.
      *
-     * @param bus the EvenBus used throughout the server
-     * @since 2019-10-08
+     * @param username The username of the user to send the message to
+     * @param topic    The topic to send the message to (e.g. "/topic/lobby")
+     * @param message  The message to send
+     * @since 2025-03-17
      */
-    public AbstractService(EventBus bus) {
-        this.bus = bus;
-        bus.register(this);
+    protected void sendTo(String username, String topic, Object message) {
+        Objects.requireNonNull(username);
+        Objects.requireNonNull(topic);
+        Objects.requireNonNull(message);
+        messagingTemplate.convertAndSendToUser(username, topic, message);
     }
 
     /**
-     * Posts a message on the EventBus
+     * Sends a message to a specific user with the given topic.
      *
-     * @param message the message to post
-     * @see de.uol.swp.common.message.Message
-     * @since 2019-10-08
+     * @param user    The user to send the message to
+     * @param topic   The topic to send the message to (e.g. "/topic/lobby")
+     * @param message The message to send
+     * @since 2025-03-17
      */
-    protected void post(Message message) {
-        bus.post(message);
+    protected void sendTo(ServerUser user, String topic, Object message) {
+        sendTo(user.getUsername(), topic, message);
     }
 
     /**
-     * Prepares a ServerMessage to be send to all connected users and posts it to the
-     * EventBus.
+     * Sends a message to multiple users with the given topic.
      *
-     * @param message the message to be send to every user
-     * @see de.uol.swp.common.message.ServerMessage
-     * @since 2019-10-08
+     * @param users   The users to send the message to
+     * @param topic   The topic to send the message to (e.g. "/topic/lobby")
+     * @param message The message to send
+     * @since 2025-03-17
      */
-    public void sendToAll(ServerMessage message) {
-        message.setReceiver(Collections.emptyList());
-        post(message);
+    protected void sendToMany(Collection<ServerUser> users, String topic, Object message) {
+        users.forEach(user -> sendTo(user, topic, message));
+    }
+
+    /**
+     * Sends a message to all users logged-in with the given topic.
+     *
+     * @param topic   The topic to send the message to (e.g. "/topic/lobby")
+     * @param message The message to send
+     * @since 2025-03-17
+     */
+    protected void sendToAll(String topic, Object message) {
+        userRegistry.getUsers().forEach(user -> sendTo(user.getName(), topic, message));
     }
 
 }

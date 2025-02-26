@@ -1,0 +1,10 @@
+stages:
+  - verify
+
+verify-job:
+  stage: verify
+  image: eclipse-temurin:21-jdk-alpine
+  script:
+    - "./mvnw clean verify"
+  tags:
+    - docker

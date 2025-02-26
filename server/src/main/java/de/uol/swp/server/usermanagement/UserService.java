@@ -1,81 +1,110 @@
 package de.uol.swp.server.usermanagement;
 
-import org.greenrobot.eventbus.EventBus;
-import org.greenrobot.eventbus.Subscribe;
-
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import de.uol.swp.common.message.MessageContext;
-import de.uol.swp.common.message.ResponseMessage;
-import de.uol.swp.common.user.User;
-import de.uol.swp.common.user.exception.RegistrationExceptionMessage;
-import de.uol.swp.common.user.request.RegisterUserRequest;
-import de.uol.swp.common.user.response.RegistrationSuccessfulResponse;
 import de.uol.swp.server.AbstractService;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import de.uol.swp.server.api.UsersApi;
+import de.uol.swp.server.api.UsersApiDelegate;
+import de.uol.swp.server.lobby.LobbyMapping;
+import de.uol.swp.server.model.UserDTO;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUser;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.provisioning.UserDetailsManager;
+import org.springframework.stereotype.Service;
 
-import java.util.Optional;
+import java.util.List;
 
 /**
- * Mapping vom event bus calls to user management calls
+ * Handles the requests sent to endpoints starting with /users
  *
- * @see de.uol.swp.server.AbstractService
- * @author Marco Grawunder
- * @since 2019-08-05
+ * @author Tilman Holube
+ * @since 2025-03-17
  */
+@Slf4j
+@Service
+public class UserService extends AbstractService implements UsersApiDelegate {
 
-
-@Singleton
-public class UserService extends AbstractService {
-
-    private static final Logger LOG = LogManager.getLogger(UserService.class);
-
-    private final UserManagement userManagement;
+    private final UserDetailsManager userDetailsManager;
+    private final PasswordEncoder passwordEncoder;
 
     /**
-     * Constructor
+     * Creates a new instance of the UserService
      *
-     * @param eventBus the EventBus used throughout the entire server (injected)
-     * @param userManagement object of the UserManagement to use
-     * @see de.uol.swp.server.usermanagement.UserManagement
-     * @since 2019-08-05
+     * @param lobbyMapping       Mapping for converting between Lobby and LobbyDTO
+     * @param userMapping        Mapping for converting between ServerUser and UserDTO
+     * @param userRegistry       Registry for all users connected via websocket
+     * @param messagingTemplate  Template for sending messages to users via websockets
+     * @param userDetailsManager Manager for user details
+     * @param passwordEncoder    Encoder for hashing passwords
+     * @since 2025-03-17
      */
-    @Inject
-    public UserService(EventBus eventBus, UserManagement userManagement) {
-        super(eventBus);
-        this.userManagement = userManagement;
+    public UserService(UserMapping userMapping, LobbyMapping lobbyMapping, SimpUserRegistry userRegistry, SimpMessagingTemplate messagingTemplate, UserDetailsManager userDetailsManager, PasswordEncoder passwordEncoder) {
+        super(lobbyMapping, userMapping, userRegistry, messagingTemplate);
+        this.userDetailsManager = userDetailsManager;
+        this.passwordEncoder = passwordEncoder;
     }
 
     /**
-     * Handles RegisterUserRequests found on the EventBus
+     * POST /users : Create User
+     * Create a new user
      *
-     * If a RegisterUserRequest is detected on the EventBus, this method is called.
-     * It tries to create a new user via the UserManagement. If this succeeds a
-     * RegistrationSuccessfulResponse is posted on the EventBus otherwise a RegistrationExceptionMessage
-     * gets posted there.
-     *
-     * @param msg The RegisterUserRequest found on the EventBus
-     * @see de.uol.swp.server.usermanagement.UserManagement#createUser(User)
-     * @see de.uol.swp.common.user.request.RegisterUserRequest
-     * @see de.uol.swp.common.user.response.RegistrationSuccessfulResponse
-     * @see de.uol.swp.common.user.exception.RegistrationExceptionMessage
-     * @since 2019-09-02
+     * @param name     (required)
+     * @param password (required)
+     * @return User created. (status code 201)
+     * or User already exists or invalid input. (status code 400)
+     * @see UsersApi#userCreate
      */
-    @Subscribe
-    public void onRegisterUserRequest(RegisterUserRequest msg) {
-        if (LOG.isDebugEnabled()){
-            LOG.debug("Got new registration message with {}", msg.getUser());
+    @Override
+    public ResponseEntity<Void> userCreate(String name, String password) {
+        if (userDetailsManager.userExists(name) || name.isBlank() || password.isBlank()) {
+            log.info("User already exists: {}", name);
+            return ResponseEntity.badRequest().build();
         }
-        ResponseMessage returnMessage;
-        try {
-            userManagement.createUser(msg.getUser());
-            returnMessage = new RegistrationSuccessfulResponse();
-        }catch (Exception e){
-            LOG.error(e);
-            returnMessage = new RegistrationExceptionMessage("Cannot create user "+msg.getUser()+" "+e.getMessage());
-        }
-        msg.getMessageContext().ifPresent(returnMessage::setMessageContext);
-        post(returnMessage);
+
+        userDetailsManager.createUser(new ServerUser(name, passwordEncoder.encode(password),
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        log.info("User created: {}", name);
+        return ResponseEntity.ok().build();
     }
+
+    /**
+     * GET /users/list : List of users
+     * Get a list of all logged-in users
+     *
+     * @return List of users. (status code 200)
+     * or Unauthorized. (status code 401)
+     * @see UsersApi#userList
+     */
+    @Override
+    public ResponseEntity<List<UserDTO>> userList() {
+        List<UserDTO> loggedInUsernames = userRegistry.getUsers().stream()
+                .map(SimpUser::getName)
+                .map(UserDTO::new)
+                .toList();
+
+        return ResponseEntity.ok(loggedInUsernames);
+    }
+
+    /**
+     * GET /users : Get the current user
+     * Returns an object of the currently authenticated user.
+     *
+     * @return OK (status code 200)
+     * or Unauthorized. (status code 401)
+     * @see UsersApi#currentUser
+     */
+    @Override
+    public ResponseEntity<UserDTO> currentUser() {
+        Object principalObject = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (principalObject instanceof ServerUser serverUser) {
+            return ResponseEntity.ok(userMapping.toDTO(serverUser));
+        } else {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
 }

@@ -1,85 +1,84 @@
 package de.uol.swp.client.user;
 
-import org.greenrobot.eventbus.EventBus;
-import com.google.inject.Inject;
-import de.uol.swp.common.user.User;
-import de.uol.swp.common.user.request.*;
+import de.uol.swp.client.api.DefaultApi;
+import de.uol.swp.client.model.UserDTO;
+import de.uol.swp.client.websocket.WebSocketConnectionManager;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Component;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
- * This class is used to hide the communication details
- * implements de.uol.common.user.UserService
+ * This class is used to hide the communication details with the server.
  *
  * @author Marco Grawunder
  * @see ClientUserService
  * @since 2017-03-17
- *
  */
-
-
+@Slf4j
+@Component
+@RequiredArgsConstructor
 public class UserService implements ClientUserService {
 
-	private final EventBus bus;
+    private final DefaultApi api;
+    private final WebSocketConnectionManager webSocketConnectionManager;
 
-	/**
-	 * Constructor
-	 *
-	 * @param bus The  EventBus set in ClientModule
-	 * @see de.uol.swp.client.di.ClientModule
-	 * @since 2017-03-17
-	 */
-	@Inject
-	public UserService(EventBus bus) {
-		this.bus = bus;
-	}
+    /**
+     * Sets the username and password in the api and connects to the server
+     * via the WebSocketConnectionManager
+     *
+     * @param username the name of the user
+     * @param password the password of the user
+     * @since 2017-03-17
+     */
+    @Override
+    public void login(String username, String password) {
+        api.getApiClient().setUsername(username);
+        api.getApiClient().setPassword(password);
 
-	/**
-	 * Posts a login request to the EventBus
-	 *
-	 * @param username the name of the user
-	 * @param password the password of the user
-	 * @since 2017-03-17
-	 */
-	@Override
-	public void login(String username, String password){
-		LoginRequest msg = new LoginRequest(username, password);
-		bus.post(msg);
-	}
+        webSocketConnectionManager.connect(username, password);
+    }
 
+    @Override
+    public void logout() {
+        api.getApiClient().setUsername(null);
+        api.getApiClient().setPassword(null);
 
-	@Override
-	public void logout(User username){
-		LogoutRequest msg = new LogoutRequest();
-		bus.post(msg);
-	}
+        webSocketConnectionManager.disconnect();
+    }
 
-	@Override
-	public void createUser(User user) {
-		RegisterUserRequest request = new RegisterUserRequest(user);
-		bus.post(request);
-	}
+    @Override
+    public void createUser(String username, String password) {
+        api.userCreateWithHttpInfo(username, password);
+    }
 
-	/**
-	 * Method to delete an users account
-	 *
-	 * This method should send a request to delete an users account, but being not
-	 * implemented, it currently does nothing.
-	 *
-	 * @param user The user to remove
-	 */
-    public void dropUser(User user) {
+    /**
+     * Method to delete a users account
+     * <p>
+     * This method should send a request to delete a users account, but being not
+     * implemented, it currently does nothing.
+     */
+    @Override
+    public void dropUser() {
         //TODO: Implement me
     }
 
-	@Override
-	public void updateUser(User user) {
-		UpdateUserRequest request = new UpdateUserRequest(user);
-		bus.post(request);
-	}
+    @Override
+    public void updateUser(UserDTO user) {
+        // TODO implement me
+    }
 
+    @Override
+    public List<UserDTO> retrieveAllUsers() {
+        ResponseEntity<List<UserDTO>> response = api.userListWithHttpInfo();
+        if (response.getStatusCode().is2xxSuccessful()) {
+            return response.getBody();
+        } else {
+            return Collections.emptyList();
+        }
+    }
 
-	@Override
-	public void retrieveAllUsers() {
-		RetrieveAllOnlineUsersRequest cmd = new RetrieveAllOnlineUsersRequest();
-		bus.post(cmd);
-	}
 }

@@ -1,132 +1,155 @@
 package de.uol.swp.server.lobby;
 
-import org.greenrobot.eventbus.EventBus;
-import org.greenrobot.eventbus.Subscribe;
-
-import com.google.inject.Inject;
-import com.google.inject.Singleton;
-import de.uol.swp.common.lobby.Lobby;
-import de.uol.swp.common.lobby.message.*;
-import de.uol.swp.common.message.ServerMessage;
-import de.uol.swp.common.user.User;
-import de.uol.swp.common.user.UserDTO;
 import de.uol.swp.server.AbstractService;
-import de.uol.swp.server.usermanagement.AuthenticationService;
+import de.uol.swp.server.api.LobbiesApi;
+import de.uol.swp.server.api.LobbiesApiDelegate;
+import de.uol.swp.server.model.LobbyDTO;
+import de.uol.swp.server.model.UserDTO;
+import de.uol.swp.server.usermanagement.ServerUser;
+import de.uol.swp.server.usermanagement.UserMapping;
+import io.github.springwolf.bindings.stomp.annotations.StompAsyncOperationBinding;
+import io.github.springwolf.core.asyncapi.annotations.AsyncOperation;
+import io.github.springwolf.core.asyncapi.annotations.AsyncPublisher;
+import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.messaging.simp.user.SimpUserRegistry;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
 /**
- * Handles the lobby requests send by the users
+ * Handles the requests sent to endpoints starting with /lobby
  *
- * @author Marco Grawunder
- * @since 2019-10-08
+ * @author Tilman Holube
+ * @since 2025-03-17
  */
+@Component
+public class LobbyService extends AbstractService implements LobbiesApiDelegate {
 
-
-@Singleton
-public class LobbyService extends AbstractService {
+    private static final String LOBBY_CREATED_TOPIC = "/topic/lobby/created";
+    private static final String LOBBY_JOIN_TOPIC = "/topic/lobby/join";
+    private static final String LOBBY_LEAVE_TOPIC = "/topic/lobby/leave";
 
     private final LobbyManagement lobbyManagement;
-    private final AuthenticationService authenticationService;
 
     /**
-     * Constructor
+     * Creates a new instance of the LobbyService
      *
-     * @param lobbyManagement The management class for creating, storing and deleting
-     *                        lobbies
-     * @param authenticationService the user management
-     * @param eventBus the server-wide EventBus
-     * @since 2019-10-08
+     * @param lobbyManagement   The management class for creating, storing and deleting
+     *                          lobbies
+     * @param lobbyMapping      Mapping class for converting between ServerLobby and LobbyDTO
+     * @param userMapping       Mapping class for converting between ServerUser and UserDTO
+     * @param userRegistry      Registry for all users connected via websocket
+     * @param messagingTemplate Template for sending messages to users
+     * @since 2025-03-17
      */
-    @Inject
-    public LobbyService(LobbyManagement lobbyManagement, AuthenticationService authenticationService, EventBus eventBus) {
-        super(eventBus);
+    public LobbyService(LobbyMapping lobbyMapping, UserMapping userMapping, SimpUserRegistry userRegistry, SimpMessagingTemplate messagingTemplate, LobbyManagement lobbyManagement) {
+        super(lobbyMapping, userMapping, userRegistry, messagingTemplate);
         this.lobbyManagement = lobbyManagement;
-        this.authenticationService = authenticationService;
     }
 
     /**
-     * Handles CreateLobbyRequests found on the EventBus
+     * POST /lobbies : Create Lobby
+     * Create a new lobby
      *
-     * If a CreateLobbyRequest is detected on the EventBus, this method is called.
-     * It creates a new Lobby via the LobbyManagement using the parameters from the
-     * request and sends a LobbyCreatedMessage to every connected user
-     *
-     * @param createLobbyRequest The CreateLobbyRequest found on the EventBus
-     * @see de.uol.swp.server.lobby.LobbyManagement#createLobby(String, User)
-     * @see de.uol.swp.common.lobby.message.LobbyCreatedMessage
-     * @since 2019-10-08
+     * @param lobbyname (required)
+     * @return Lobby created. (status code 201)
+     * or Lobby with name already exists. (status code 400)
+     * or Unauthorized. (status code 401)
+     * @see LobbiesApi#lobbyCreate
      */
-    @Subscribe
-    public void onCreateLobbyRequest(CreateLobbyRequest createLobbyRequest) {
-        lobbyManagement.createLobby(createLobbyRequest.getName(), createLobbyRequest.getOwner());
-        sendToAll(new LobbyCreatedMessage(createLobbyRequest.getName(), (UserDTO) createLobbyRequest.getOwner()));
-    }
+    @AsyncPublisher(operation = @AsyncOperation(
+            channelName = LOBBY_CREATED_TOPIC,
+            description = "A new lobby has been created",
+            payloadType = LobbyDTO.class
+    ))
+    @StompAsyncOperationBinding
+    @Override
+    public ResponseEntity<LobbyDTO> lobbyCreate(String lobbyname) {
+        Object user = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(user instanceof ServerUser serverUser))
+            return ResponseEntity.internalServerError().build();
+        if (lobbyname.isBlank())
+            return ResponseEntity.badRequest().build();
 
-    /**
-     * Handles LobbyJoinUserRequests found on the EventBus
-     *
-     * If a LobbyJoinUserRequest is detected on the EventBus, this method is called.
-     * It adds a user to a Lobby stored in the LobbyManagement and sends a UserJoinedLobbyMessage
-     * to every user in the lobby.
-     *
-     * @param lobbyJoinUserRequest The LobbyJoinUserRequest found on the EventBus
-     * @see de.uol.swp.common.lobby.Lobby
-     * @see de.uol.swp.common.lobby.message.UserJoinedLobbyMessage
-     * @since 2019-10-08
-     */
-    @Subscribe
-    public void onLobbyJoinUserRequest(LobbyJoinUserRequest lobbyJoinUserRequest) {
-        Optional<Lobby> lobby = lobbyManagement.getLobby(lobbyJoinUserRequest.getName());
-
-        if (lobby.isPresent()) {
-            lobby.get().joinUser(lobbyJoinUserRequest.getUser());
-            sendToAllInLobby(lobbyJoinUserRequest.getName(), new UserJoinedLobbyMessage(lobbyJoinUserRequest.getName(), lobbyJoinUserRequest.getUser()));
-        }
-        // TODO: error handling not existing lobby
-    }
-
-    /**
-     * Handles LobbyLeaveUserRequests found on the EventBus
-     *
-     * If a LobbyLeaveUserRequest is detected on the EventBus, this method is called.
-     * It removes a user from a Lobby stored in the LobbyManagement and sends a
-     * UserLeftLobbyMessage to every user in the lobby.
-     *
-     * @param lobbyLeaveUserRequest The LobbyJoinUserRequest found on the EventBus
-     * @see de.uol.swp.common.lobby.Lobby
-     * @see de.uol.swp.common.lobby.message.UserLeftLobbyMessage
-     * @since 2019-10-08
-     */
-    @Subscribe
-    public void onLobbyLeaveUserRequest(LobbyLeaveUserRequest lobbyLeaveUserRequest) {
-        Optional<Lobby> lobby = lobbyManagement.getLobby(lobbyLeaveUserRequest.getName());
-
-        if (lobby.isPresent()) {
-            lobby.get().leaveUser(lobbyLeaveUserRequest.getUser());
-            sendToAllInLobby(lobbyLeaveUserRequest.getName(), new UserLeftLobbyMessage(lobbyLeaveUserRequest.getName(), lobbyLeaveUserRequest.getUser()));
-        }
-        // TODO: error handling not existing lobby
-    }
-
-    /**
-     * Prepares a given ServerMessage to be send to all players in the lobby and
-     * posts it on the EventBus
-     *
-     * @param lobbyName Name of the lobby the players are in
-     * @param message the message to be send to the users
-     * @see de.uol.swp.common.message.ServerMessage
-     * @since 2019-10-08
-     */
-    public void sendToAllInLobby(String lobbyName, ServerMessage message) {
-        Optional<Lobby> lobby = lobbyManagement.getLobby(lobbyName);
-
-        if (lobby.isPresent()) {
-            message.setReceiver(authenticationService.getSessions(lobby.get().getUsers()));
-            post(message);
+        try {
+            lobbyManagement.createLobby(lobbyname, serverUser);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
         }
 
-        // TODO: error handling not existing lobby
+        ServerLobby lobby = lobbyManagement.getLobby(lobbyname).orElseThrow();
+        sendToAll(LOBBY_CREATED_TOPIC, lobbyMapping.toDTO(lobby));
+        return ResponseEntity.ok(lobbyMapping.toDTO(lobby));
+    }
+
+    /**
+     * POST /lobbies/join : Join Lobby
+     * Join a lobby
+     *
+     * @param lobbyname (required)
+     * @return Lobby joined. (status code 200)
+     * or Unauthorized. (status code 401)
+     * or Lobby not found. (status code 404)
+     * @see LobbiesApi#lobbyJoin
+     */
+    @AsyncPublisher(operation = @AsyncOperation(
+            channelName = "/user" + LOBBY_JOIN_TOPIC + "/{lobbyname}",
+            description = "A user has joined a lobby",
+            payloadType = UserDTO.class
+    ))
+    @StompAsyncOperationBinding
+    @Override
+    public ResponseEntity<LobbyDTO> lobbyJoin(String lobbyname) {
+        Object user = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(user instanceof ServerUser serverUser))
+            return ResponseEntity.internalServerError().build();
+        if (lobbyname.isBlank())
+            return ResponseEntity.badRequest().build();
+
+        Optional<ServerLobby> lobby = lobbyManagement.getLobby(lobbyname);
+        if (lobby.isPresent()) {
+            if (!lobby.get().getUsers().contains(serverUser)) {
+                lobby.get().getUsers().add(serverUser);
+            }
+            sendToMany(lobby.get().getUsers(), LOBBY_JOIN_TOPIC + "/" + lobbyname, userMapping.toDTO(serverUser));
+            return ResponseEntity.ok(lobbyMapping.toDTO(lobby.get()));
+        }
+        return ResponseEntity.notFound().build();
+    }
+
+    /**
+     * POST /lobbies/leave : Leave Lobby
+     * Leave a lobby
+     *
+     * @param lobbyname (required)
+     * @return Left lobby successfully. (status code 200)
+     * or Unauthorized. (status code 401)
+     * or Lobby not found. (status code 404)
+     * @see LobbiesApi#lobbyLeave
+     */
+    @AsyncPublisher(operation = @AsyncOperation(
+            channelName = "/user" + LOBBY_LEAVE_TOPIC + "/{lobbyname}",
+            description = "A user has left a lobby",
+            payloadType = UserDTO.class
+    ))
+    @StompAsyncOperationBinding
+    @Override
+    public ResponseEntity<Void> lobbyLeave(String lobbyname) {
+        Object user = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(user instanceof ServerUser serverUser))
+            return ResponseEntity.internalServerError().build();
+        if (lobbyname.isBlank())
+            return ResponseEntity.badRequest().build();
+
+        Optional<ServerLobby> lobby = lobbyManagement.getLobby(lobbyname);
+        if (lobby.isPresent()) {
+            lobby.get().getUsers().remove(serverUser);
+            sendToMany(lobby.get().getUsers(), LOBBY_LEAVE_TOPIC + "/" + lobbyname, userMapping.toDTO(serverUser));
+            return ResponseEntity.ok().build();
+        }
+        return ResponseEntity.notFound().build();
     }
 
 }
